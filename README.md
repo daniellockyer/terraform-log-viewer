@@ -4,6 +4,8 @@ A browser-based viewer for GitHub Actions Terraform plan and apply logs. Drop a 
 
 **Live demo:** https://daniellockyer.github.io/terraform-log-viewer/
 
+<img width="3906" height="3140" alt="CleanShot 2026-07-01 at 10 44 47@2x" src="https://github.com/user-attachments/assets/6ab2e17c-ff2f-4db6-8254-d917d053ada9" />
+
 ## Usage
 
 1. Open the [live demo](https://daniellockyer.github.io/terraform-log-viewer/) or serve `index.html` locally.
