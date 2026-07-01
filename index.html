@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terraform Log Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f9fafb; min-height: 100vh; }
+
+  #drop-zone {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 32px; border: 3px dashed #cbd5e1; margin: 16px;
+    border-radius: 12px; background: #fff; transition: border-color 0.15s, background 0.15s;
+    cursor: pointer;
+  }
+  #drop-zone.dragover { border-color: #4a90d9; background: #eff6ff; }
+  #drop-zone.hidden { display: none; }
+  #drop-zone h2 { font-size: 20px; color: #1f2937; margin-bottom: 8px; }
+  #drop-zone p { font-size: 14px; color: #6b7280; margin-bottom: 16px; text-align: center; max-width: 480px; }
+  #drop-zone .hint { font-size: 12px; color: #9ca3af; font-family: monospace; }
+  #file-input { display: none; }
+
+  #results { display: none; padding: 16px; background: #fff; min-height: 100vh; }
+  #results.visible { display: block; }
+
+  .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .toolbar h1 { font-size: 16px; color: #1f2937; flex: 1; }
+  .toolbar button {
+    font-size: 12px; padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px;
+    background: #fff; color: #374151; cursor: pointer;
+  }
+  .toolbar button:hover { background: #f3f4f6; }
+
+  #summary {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+    background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
+    padding: 12px 16px; margin-bottom: 16px; white-space: pre-wrap; color: #374151;
+    max-height: 320px; overflow-y: auto;
+  }
+
+  .swimlane { --label-w: 220px; }
+  .swim-row { display: flex; align-items: center; height: 28px; border-bottom: 1px solid #f3f4f6; }
+  .swim-ticks { display: flex; align-items: flex-end; height: 24px; border-bottom: 1px solid #e5e7eb; margin-bottom: 2px; }
+  .swim-label { width: var(--label-w); min-width: var(--label-w); max-width: var(--label-w);
+                 font-size: 11px; font-family: monospace; color: #374151;
+                 padding-right: 8px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                 position: relative; }
+  .swim-track { flex: 1; height: 100%; position: relative; overflow: hidden; }
+  .chart-track.swim-track { overflow: visible; }
+  .tick-track { height: 20px; }
+  .tick { position: absolute; transform: translateX(-50%); font-size: 9px; font-family: monospace; color: #9ca3af; }
+  .swim-dur { width: 120px; min-width: 120px; font-size: 9px; font-weight: 600; color: var(--bar-color, #6b7280);
+               padding-left: 8px; white-space: nowrap; }
+
+  .chart-row { display: flex; align-items: stretch; margin-bottom: 8px; padding-top: 36px; }
+  .chart-y-axis { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end;
+                   padding-top: 20px; padding-bottom: 0; overflow: visible; }
+  .chart-y-axis .section-title { font-size: 11px; color: #6b7280; font-weight: 600; display: block; margin-bottom: 4px; }
+  .y-label { font-size: 10px; font-family: monospace; color: #9ca3af; position: absolute; right: 8px; transform: translateY(-50%); }
+  .chart-track { height: 380px; position: relative; }
+  .cumulative-svg { width: 100%; height: 100%; display: block; position: absolute; top: 0; left: 0; }
+  .chart-overlays { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
+  .chart-overlays .phase-label { position: absolute; top: -18px; font-size: 9px; font-family: monospace; color: #9ca3af;
+                                   white-space: nowrap; pointer-events: auto; }
+  .event-dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid white;
+                transform: translate(-50%, -50%); pointer-events: auto; cursor: default; }
+  .legend-col { display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #6b7280; white-space: nowrap; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  .resize-handle { position: absolute; top: 0; right: 0; width: 5px; height: 100%; cursor: col-resize;
+                    background: transparent; z-index: 10; }
+  .resize-handle:hover, .resize-handle.active { background: #d1d5db; }
+
+  .module-row { cursor: pointer; background: #fafbfc; }
+  .module-row:hover { background: #f3f4f6; }
+  .module-row.expanded { background: #f0f4ff; }
+  .expand-icon { display: inline-block; font-size: 8px; width: 12px; transition: transform 0.15s; }
+  .module-row.expanded .expand-icon { transform: rotate(90deg); }
+
+  .span-outline { position: absolute; top: 2px; bottom: 2px;
+                   border: 1.5px solid var(--bar-color); border-radius: 3px; opacity: 0.4; }
+  .span-bar { position: absolute; top: 30%; bottom: 30%;
+               background: var(--bar-color); opacity: 0.7; border-radius: 1px; min-width: 1.5px; }
+  .span-bar:hover { opacity: 1; z-index: 1; }
+
+  .child-rows { display: none; }
+  .child-rows.open { display: block; }
+  .child-row { height: 24px; background: #fff; }
+  .child-row:nth-child(even) { background: #fafbfc; }
+  .child-label { font-size: 10px; color: #6b7280; padding-left: 20px; text-align: right; }
+  .child-count { color: #9ca3af; font-size: 9px; }
+
+  .swim-axis-label { text-align: center; font-size: 11px; color: #6b7280; margin-top: 8px; }
+
+  #error-msg { display: none; color: #dc2626; font-size: 13px; margin-top: 12px; }
+</style>
+</head>
+<body>
+
+<div id="drop-zone">
+  <h2>Terraform Plan Log Viewer</h2>
+  <p>Drop a GHA Terraform plan/apply log here, or click to choose a file.<br>You can also paste log text with <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>V</kbd>.</p>
+  <span class="hint">2026-03-09T09:03:14.0427158Z Terraform will perform...</span>
+  <input type="file" id="file-input" accept=".log,.txt,text/*">
+  <p id="error-msg"></p>
+</div>
+
+<div id="results">
+  <div class="toolbar">
+    <h1 id="title"></h1>
+    <button type="button" id="btn-new">Load another log</button>
+  </div>
+  <pre id="summary"></pre>
+  <div class="swimlane" id="swimlane"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const ANSI_RE = /\x1b\[[0-9;]*m|\[[\d;]*m/g;
+  const RESOURCE_CHANGE_RE = /#\s*(\S+)\s+(will be|must be|has been)\s+(created|updated|destroyed|replaced|read)/;
+  const RESOURCE_ACTION_SYMBOL_RE = /([+\-~])\s+(resource\s+)?"([^"]+)"\s+"([^"]+)"/;
+  const DRIFT_RE = /(has changed outside of Terraform|drift detected|has been changed outside)/i;
+  const ERROR_RE = /(?:^|\s)(Error:)/i;
+  const WARNING_RE = /(?:^|\s)(Warning:)/i;
+  const REFRESH_START_RE = /(\S+):\s+Refreshing state\.\.\./;
+  const REFRESH_DONE_RE = /(\S+):\s+Refresh complete/;
+  const READING_START_RE = /(\S+):\s+Reading\.\.\./;
+  const READING_DONE_RE = /(\S+):\s+Read complete/;
+
+  const PHASE_MARKERS = [
+    ["Initializing the backend", "Init"],
+    ["Initializing provider plugins", "Providers"],
+    ["Terraform has been successfully initialized", "Init done"],
+    ["Refreshing state...", "Refresh"],
+    ["Reading...", "Refresh"],
+    ["Terraform will perform the following actions", "Plan output"],
+    ["Plan:", "Plan summary"],
+    ["Apply complete", "Apply done"],
+    ["No changes. Your infrastructure matches", "No changes"],
+  ];
+
+  const BAR_PALETTE = [
+    "#4a90d9", "#22c55e", "#f59e0b", "#ef4444", "#a855f7",
+    "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#6366f1",
+    "#14b8a6", "#e879f9", "#facc15", "#fb7185", "#38bdf8",
+  ];
+
+  const EVENT_COLORS = {
+    created: "#22c55e",
+    updated: "#f59e0b",
+    destroyed: "#ef4444",
+    replaced: "#a855f7",
+    drift: "#f97316",
+    error: "#dc2626",
+    warning: "#eab308",
+  };
+
+  const dropZone = document.getElementById("drop-zone");
+  const fileInput = document.getElementById("file-input");
+  const results = document.getElementById("results");
+  const errorMsg = document.getElementById("error-msg");
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function stripAnsi(s) {
+    return s.replace(ANSI_RE, "");
+  }
+
+  function parseTimestamp(raw) {
+    if (raw.includes(".")) {
+      const dot = raw.indexOf(".");
+      const beforeDot = raw.slice(0, dot);
+      const afterDot = raw.slice(dot + 1);
+      const frac = afterDot.replace(/Z$/, "").slice(0, 6);
+      raw = beforeDot + "." + frac;
+    } else {
+      raw = raw.replace(/Z$/, "");
+    }
+    const iso = raw.endsWith("Z") || raw.includes("+") ? raw : raw + "Z";
+    const ms = Date.parse(iso);
+    return isNaN(ms) ? null : new Date(ms);
+  }
+
+  function parseLine(line) {
+    const trimmed = line.trim();
+    const space = trimmed.indexOf(" ");
+    if (space === -1) return { ts: null, msg: trimmed };
+    const tsRaw = trimmed.slice(0, space);
+    const ts = parseTimestamp(tsRaw);
+    const msg = ts ? stripAnsi(trimmed.slice(space + 1)) : stripAnsi(trimmed);
+    return { ts, msg };
+  }
+
+  function classifyLine(ts, msg, result, openRefreshes) {
+    for (const [marker, label] of PHASE_MARKERS) {
+      if (msg.includes(marker)) {
+        if (!result.phases.length || result.phases[result.phases.length - 1][1] !== label) {
+          result.phases.push([ts, label]);
+        }
+        break;
+      }
+    }
+
+    for (const startRe of [REFRESH_START_RE, READING_START_RE]) {
+      const m = msg.match(startRe);
+      if (m) {
+        const resource = m[1];
+        if (openRefreshes[resource]) openRefreshes[resource].end = ts;
+        const span = { resource, start: ts, end: null };
+        openRefreshes[resource] = span;
+        result.refreshes.push(span);
+        return;
+      }
+    }
+
+    for (const doneRe of [REFRESH_DONE_RE, READING_DONE_RE]) {
+      const m = msg.match(doneRe);
+      if (m) {
+        const resource = m[1];
+        if (openRefreshes[resource]) {
+          openRefreshes[resource].end = ts;
+          delete openRefreshes[resource];
+        }
+        return;
+      }
+    }
+
+    let m = msg.match(RESOURCE_CHANGE_RE);
+    if (m) {
+      result.events.push({ time: ts, kind: m[3], detail: m[1] });
+      return;
+    }
+
+    m = msg.match(RESOURCE_ACTION_SYMBOL_RE);
+    if (m) {
+      const action = { "+": "created", "-": "destroyed", "~": "updated" }[m[1]] || "changed";
+      result.events.push({ time: ts, kind: action, detail: m[3] + "." + m[4] });
+      return;
+    }
+
+    if (DRIFT_RE.test(msg)) {
+      const resource = msg.includes("#")
+        ? msg.split("#").pop().trim().split(/\s+/)[0]
+        : "unknown";
+      result.events.push({ time: ts, kind: "drift", detail: resource });
+      return;
+    }
+
+    if (ERROR_RE.test(msg)) {
+      result.events.push({ time: ts, kind: "error", detail: msg.trim().slice(0, 120) });
+      return;
+    }
+
+    if (WARNING_RE.test(msg)) {
+      result.events.push({ time: ts, kind: "warning", detail: msg.trim().slice(0, 120) });
+    }
+  }
+
+  function parseText(text) {
+    const result = {
+      timestamps: [],
+      messages: [],
+      events: [],
+      phases: [],
+      refreshes: [],
+      skipped: 0,
+    };
+    const openRefreshes = {};
+    const lines = text.split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const { ts, msg } = parseLine(line);
+      if (ts) {
+        result.timestamps.push(ts);
+        result.messages.push(msg);
+        classifyLine(ts, msg, result, openRefreshes);
+      } else {
+        result.skipped++;
+      }
+    }
+    for (const span of Object.values(openRefreshes)) {
+      if (span.end === null) span.end = span.start;
+    }
+    return result;
+  }
+
+  function fmtMmSs(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds) % 60;
+    return m + ":" + String(s).padStart(2, "0");
+  }
+
+  function fmtNum(n) {
+    return n.toLocaleString("en-US");
+  }
+
+  function moduleGroup(resource) {
+    if (resource.startsWith("module.")) {
+      const parts = resource.split(".");
+      let name = parts[1];
+      const bracket = name.indexOf("[");
+      if (bracket !== -1) name = name.slice(0, bracket);
+      return "module." + name;
+    }
+    if (resource.startsWith("data.")) return "data sources";
+    return "root";
+  }
+
+  function subKey(resource) {
+    if (resource.startsWith("module.")) {
+      const parts = resource.split(".", 3);
+      if (parts.length >= 3) {
+        let inner = parts[2];
+        if (inner.startsWith("data.")) inner = inner.slice(5);
+        const bracket = inner.lastIndexOf("[");
+        if (bracket !== -1) inner = inner.slice(0, bracket);
+        return inner;
+      }
+    }
+    if (resource.startsWith("data.")) {
+      const r = resource.slice(5);
+      const bracket = r.lastIndexOf("[");
+      return bracket !== -1 ? r.slice(0, bracket) : r;
+    }
+    const bracket = resource.lastIndexOf("[");
+    return bracket !== -1 ? resource.slice(0, bracket) : resource;
+  }
+
+  function groupRefreshes(refreshes) {
+    const groups = {};
+    for (const span of refreshes) {
+      const g = moduleGroup(span.resource);
+      if (!groups[g]) groups[g] = { group: g, spans: [], firstStart: null, lastEnd: null, count: 0 };
+      const gr = groups[g];
+      gr.spans.push(span);
+      gr.count++;
+      if (gr.firstStart === null || span.start < gr.firstStart) gr.firstStart = span.start;
+      const end = span.end || span.start;
+      if (gr.lastEnd === null || end > gr.lastEnd) gr.lastEnd = end;
+    }
+    return Object.values(groups).sort((a, b) => (a.firstStart || 0) - (b.firstStart || 0));
+  }
+
+  function nearestIndex(sortedList, target) {
+    let lo = 0;
+    let hi = sortedList.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sortedList[mid] < target) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  function buildSummary(log) {
+    const lines = [];
+    lines.push("=".repeat(60));
+    lines.push("  TERRAFORM PLAN LOG ANALYSIS");
+    lines.push("=".repeat(60));
+
+    if (log.timestamps.length) {
+      const span = (log.timestamps[log.timestamps.length - 1] - log.timestamps[0]) / 1000;
+      lines.push("");
+      lines.push("  Duration:    " + span.toFixed(1) + "s");
+      lines.push("  Lines:       " + fmtNum(log.timestamps.length));
+    }
+
+    if (log.phases.length) {
+      lines.push("");
+      lines.push("  Phases:");
+      const t0 = log.timestamps[0];
+      for (const [ts, label] of log.phases) {
+        const elapsed = (ts - t0) / 1000;
+        lines.push("    " + elapsed.toFixed(1).padStart(6) + "s  " + label);
+      }
+    }
+
+    const creates = log.events.filter(e => e.kind === "created");
+    const updates = log.events.filter(e => e.kind === "updated");
+    const destroys = log.events.filter(e => e.kind === "destroyed");
+    const replaces = log.events.filter(e => e.kind === "replaced");
+    const drifts = log.events.filter(e => e.kind === "drift");
+    const errors = log.events.filter(e => e.kind === "error");
+    const warnings = log.events.filter(e => e.kind === "warning");
+
+    if (creates.length || updates.length || destroys.length || replaces.length) {
+      lines.push("");
+      lines.push("  Resource changes:");
+      for (const [symbol, label, items] of [
+        ["+", "create", creates],
+        ["~", "update", updates],
+        ["-", "destroy", destroys],
+        ["±", "replace", replaces],
+      ]) {
+        if (items.length) {
+          lines.push("    " + symbol + " " + String(items.length).padStart(3) + " " + label);
+          for (const e of items) lines.push("          " + e.detail);
+        }
+      }
+    }
+
+    if (drifts.length) {
+      lines.push("");
+      lines.push("  Drift detected (" + drifts.length + "):");
+      for (const e of drifts) lines.push("      " + e.detail);
+    }
+
+    if (errors.length) {
+      lines.push("");
+      lines.push("  Errors (" + errors.length + "):");
+      const t0 = log.timestamps[0];
+      for (const e of errors) {
+        lines.push("    [" + ((e.time - t0) / 1000).toFixed(1) + "s] " + e.detail);
+      }
+    }
+
+    if (warnings.length) {
+      lines.push("");
+      lines.push("  Warnings (" + warnings.length + "):");
+      const t0 = log.timestamps[0];
+      for (const e of warnings) {
+        lines.push("    [" + ((e.time - t0) / 1000).toFixed(1) + "s] " + e.detail);
+      }
+    }
+
+    if (!creates.length && !updates.length && !destroys.length && !replaces.length &&
+        !drifts.length && !errors.length && !warnings.length) {
+      lines.push("");
+      lines.push("  No resource changes, drift, errors, or warnings found.");
+    }
+
+    if (log.refreshes.length && log.timestamps.length) {
+      const durations = [];
+      for (let i = 0; i < log.refreshes.length; i++) {
+        const span = log.refreshes[i];
+        let duration;
+        if (span.end !== null && span.end !== span.start) {
+          duration = (span.end - span.start) / 1000;
+        } else if (i + 1 < log.refreshes.length) {
+          duration = (log.refreshes[i + 1].start - span.start) / 1000;
+        } else {
+          duration = (log.timestamps[log.timestamps.length - 1] - span.start) / 1000;
+        }
+        durations.push([span.resource, duration]);
+      }
+      durations.sort((a, b) => b[1] - a[1]);
+      const top = durations.slice(0, 10);
+      if (top.length && top[0][1] > 0) {
+        lines.push("");
+        lines.push("  Slowest refresh (top 10):");
+        for (const [resource, duration] of top) {
+          if (duration <= 0) break;
+          lines.push("    " + duration.toFixed(1).padStart(6) + "s  " + resource);
+        }
+      }
+    }
+
+    if (log.skipped) {
+      lines.push("");
+      lines.push("  (Skipped " + log.skipped + " line(s) without a valid timestamp.)");
+    }
+
+    lines.push("=".repeat(60));
+    return lines.join("\n");
+  }
+
+  function renderSwimlane(log) {
+    if (!log.timestamps.length) return "";
+
+    const t0 = log.timestamps[0];
+    const totalS = (log.timestamps[log.timestamps.length - 1] - t0) / 1000 || 1;
+    const grouped = groupRefreshes(log.refreshes);
+    const n = log.timestamps.length;
+
+    const pct = s => (s / totalS) * 100;
+    const pctDt = dt => pct((dt - t0) / 1000);
+
+    const parts = [];
+    const svgW = 1000;
+    const svgHInner = 350;
+
+    const points = [];
+    const step = Math.max(1, Math.floor(n / 2000));
+    for (let i = 0; i < n; i += step) {
+      const px = (pctDt(log.timestamps[i]) / 100) * svgW;
+      const py = svgHInner - ((i + 1) / n) * svgHInner;
+      points.push(px.toFixed(1) + "," + py.toFixed(1));
+    }
+    if ((n - 1) % step !== 0) {
+      const px = (pctDt(log.timestamps[n - 1]) / 100) * svgW;
+      points.push(px.toFixed(1) + ",0");
+    }
+
+    const pointStr = points.join(" ");
+    const fillPoints = "0," + svgHInner + " " + pointStr + " " + svgW + "," + svgHInner;
+    const svgParts = [
+      '<polygon points="' + fillPoints + '" fill="#4a90d9" opacity="0.12"/>',
+      '<polyline points="' + pointStr + '" fill="none" stroke="#4a90d9" stroke-width="1.8" vector-effect="non-scaling-stroke"/>',
+    ];
+    for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
+      const yy = svgHInner - frac * svgHInner;
+      svgParts.push('<line x1="0" y1="' + yy + '" x2="' + svgW + '" y2="' + yy + '" stroke="#e5e7eb" stroke-width="0.5" vector-effect="non-scaling-stroke"/>');
+    }
+    for (const [phaseTs] of log.phases) {
+      const px = (pctDt(phaseTs) / 100) * svgW;
+      svgParts.push('<line x1="' + px + '" y1="0" x2="' + px + '" y2="' + svgHInner + '" stroke="#d1d5db" stroke-width="1" stroke-dasharray="4,3" vector-effect="non-scaling-stroke"/>');
+    }
+
+    const overlays = [];
+    let prevPct = -999;
+    const minGapPct = 4;
+    for (const [phaseTs, label] of log.phases) {
+      const p = pctDt(phaseTs);
+      const lp = Math.max(p, prevPct + minGapPct);
+      overlays.push('<span class="phase-label" style="left:' + lp.toFixed(2) + '%">' + esc(label) + "</span>");
+      prevPct = lp;
+    }
+
+    for (const event of log.events) {
+      const ei = nearestIndex(log.timestamps, event.time);
+      const leftP = pctDt(event.time);
+      const topP = (1 - (ei + 1) / n) * 100;
+      const color = EVENT_COLORS[event.kind] || "#888";
+      overlays.push(
+        '<span class="event-dot" style="left:' + leftP.toFixed(2) + "%;top:" + topP.toFixed(2) +
+        "%;background:" + color + '" title="' + esc(event.kind + ": " + event.detail) + '"></span>'
+      );
+    }
+
+    const yLabels = [];
+    for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
+      const val = Math.floor(n * frac);
+      const topP = (1 - frac) * 100;
+      yLabels.push('<span class="y-label" style="top:' + topP.toFixed(1) + '%">' + fmtNum(val) + "</span>");
+    }
+
+    const kindsSeen = [...new Set(log.events.map(e => e.kind))];
+    const legendItems = kindsSeen.map(k =>
+      '<span class="legend-item"><span class="legend-dot" style="background:' + (EVENT_COLORS[k] || "#888") +
+      '"></span>' + esc(k) + "</span>"
+    ).join("");
+
+    parts.push('<div class="chart-row">');
+    parts.push('<div class="swim-label chart-y-axis"><div class="resize-handle" id="resize-handle"></div><span class="section-title">Log lines</span>' + yLabels.join("") + "</div>");
+    parts.push('<div class="swim-track chart-track"><div class="chart-overlays">' + overlays.join("") +
+      '</div><svg viewBox="0 0 ' + svgW + " " + svgHInner + '" preserveAspectRatio="none" class="cumulative-svg">' +
+      svgParts.join("") + "</svg></div>");
+    parts.push('<div class="swim-dur legend-col">' + legendItems + "</div>");
+    parts.push("</div>");
+
+    parts.push('<div class="swim-ticks"><div class="swim-label"></div><div class="swim-track tick-track">');
+    const nTicks = Math.min(20, Math.max(5, Math.floor(totalS / 10)));
+    for (let i = 0; i <= nTicks; i++) {
+      const s = totalS * i / nTicks;
+      parts.push('<span class="tick" style="left:' + pct(s).toFixed(2) + '%">' + fmtMmSs(s) + "</span>");
+    }
+    parts.push('</div><div class="swim-dur"></div></div>');
+
+    grouped.forEach((gr, gi) => {
+      const color = BAR_PALETTE[gi % BAR_PALETTE.length];
+      const grId = "grp-" + gi;
+      const spanS = gr.firstStart && gr.lastEnd ? (gr.lastEnd - gr.firstStart) / 1000 : 0;
+
+      parts.push('<div class="swim-row module-row" data-target="' + grId + '" style="--bar-color:' + color + '">');
+      parts.push('<div class="swim-label"><span class="expand-icon">&#9654;</span> ' + esc(gr.group) + "</div>");
+      parts.push('<div class="swim-track">');
+      if (gr.firstStart && gr.lastEnd) {
+        const left = pctDt(gr.firstStart);
+        const width = pctDt(gr.lastEnd) - left;
+        parts.push('<div class="span-outline" style="left:' + left.toFixed(2) + "%;width:" + Math.max(width, 0.15).toFixed(2) + '%"></div>');
+      }
+      for (const span of gr.spans) {
+        const left = pctDt(span.start);
+        const end = span.end || span.start;
+        const wPct = pctDt(end) - left;
+        parts.push('<div class="span-bar" style="left:' + left.toFixed(2) + "%;width:" + Math.max(wPct, 0.08).toFixed(2) +
+          '%" title="' + esc(span.resource) + '"></div>');
+      }
+      parts.push("</div>");
+      parts.push('<div class="swim-dur">' + spanS.toFixed(1) + "s (" + gr.count + ")</div>");
+      parts.push("</div>");
+
+      const subGroups = {};
+      for (const span of gr.spans) {
+        const key = subKey(span.resource);
+        (subGroups[key] ||= []).push(span);
+      }
+
+      parts.push('<div class="child-rows" id="' + grId + '">');
+      const subEntries = Object.entries(subGroups).sort(
+        (a, b) => Math.min(...a[1].map(s => s.start)) - Math.min(...b[1].map(s => s.start))
+      );
+      for (const [subName, subSpans] of subEntries) {
+        const subFirst = Math.min(...subSpans.map(s => s.start));
+        const subLast = Math.max(...subSpans.map(s => (s.end || s.start)));
+        const subDur = (subLast - subFirst) / 1000;
+
+        parts.push('<div class="swim-row child-row" style="--bar-color:' + color + '">');
+        parts.push('<div class="swim-label child-label">' + esc(subName) + ' <span class="child-count">x' + subSpans.length + "</span></div>");
+        parts.push('<div class="swim-track">');
+        for (const span of subSpans) {
+          const left = pctDt(span.start);
+          const end = span.end || span.start;
+          const wPct = pctDt(end) - left;
+          const res = span.resource;
+          const bracket = res.indexOf('["');
+          let instance = "";
+          if (bracket !== -1) {
+            const endBracket = res.indexOf('"]', bracket);
+            if (endBracket !== -1) instance = res.slice(bracket, endBracket + 2);
+          }
+          const duration = (end - span.start) / 1000;
+          parts.push('<div class="span-bar" style="left:' + left.toFixed(2) + "%;width:" + Math.max(wPct, 0.08).toFixed(2) +
+            '%" title="' + esc(instance + " " + duration.toFixed(2) + "s") + '"></div>');
+        }
+        parts.push("</div>");
+        parts.push('<div class="swim-dur">' + subDur.toFixed(1) + "s (x" + subSpans.length + ")</div>");
+        parts.push("</div>");
+      }
+      parts.push("</div>");
+    });
+
+    parts.push('<div class="swim-axis-label">Elapsed time (mm:ss)</div>');
+    return parts.join("");
+  }
+
+  function wireInteractions() {
+    document.querySelectorAll(".module-row").forEach(row => {
+      row.addEventListener("click", () => {
+        const target = document.getElementById(row.dataset.target);
+        if (target) {
+          const open = target.classList.toggle("open");
+          row.classList.toggle("expanded", open);
+        }
+      });
+    });
+
+    const handle = document.getElementById("resize-handle");
+    const swimlane = document.querySelector(".swimlane");
+    if (!handle || !swimlane) return;
+
+    let dragging = false;
+    let startX = 0;
+    let startW = 0;
+
+    handle.addEventListener("mousedown", e => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = true;
+      startX = e.clientX;
+      startW = parseInt(getComputedStyle(swimlane).getPropertyValue("--label-w"), 10) || 220;
+      handle.classList.add("active");
+    });
+    document.addEventListener("mousemove", e => {
+      if (!dragging) return;
+      const w = Math.max(100, startW + (e.clientX - startX));
+      swimlane.style.setProperty("--label-w", w + "px");
+    });
+    document.addEventListener("mouseup", () => {
+      if (dragging) {
+        dragging = false;
+        handle.classList.remove("active");
+      }
+    });
+  }
+
+  function showResults(log, filename) {
+    const totalS = (log.timestamps[log.timestamps.length - 1] - log.timestamps[0]) / 1000;
+    const title = "Terraform Log — " + fmtNum(log.timestamps.length) + " lines, " +
+      log.events.length + " events, " + fmtNum(log.refreshes.length) + " refreshes, " +
+      totalS.toFixed(1) + "s" + (filename ? " (" + filename + ")" : "");
+
+    document.getElementById("title").textContent = title;
+    document.getElementById("summary").textContent = buildSummary(log);
+    document.getElementById("swimlane").innerHTML = renderSwimlane(log);
+
+    dropZone.classList.add("hidden");
+    results.classList.add("visible");
+    errorMsg.style.display = "none";
+    wireInteractions();
+  }
+
+  function showError(msg) {
+    errorMsg.textContent = msg;
+    errorMsg.style.display = "block";
+  }
+
+  function processText(text, filename) {
+    errorMsg.style.display = "none";
+    const log = parseText(text);
+    if (!log.timestamps.length) {
+      showError("No valid timestamps found. Expected GHA-style lines like: 2026-03-09T09:03:14.0427158Z ...");
+      return;
+    }
+    showResults(log, filename);
+  }
+
+  function processFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => processText(reader.result, file.name);
+    reader.onerror = () => showError("Failed to read file.");
+    reader.readAsText(file);
+  }
+
+  dropZone.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files.length) processFile(fileInput.files[0]);
+    fileInput.value = "";
+  });
+
+  dropZone.addEventListener("dragover", e => {
+    e.preventDefault();
+    dropZone.classList.add("dragover");
+  });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
+  dropZone.addEventListener("drop", e => {
+    e.preventDefault();
+    dropZone.classList.remove("dragover");
+    const file = e.dataTransfer.files[0];
+    if (file) processFile(file);
+    else showError("Please drop a text log file.");
+  });
+
+  document.addEventListener("paste", e => {
+    if (results.classList.contains("visible")) return;
+    const text = e.clipboardData && e.clipboardData.getData("text");
+    if (text && text.trim()) {
+      e.preventDefault();
+      processText(text, "pasted log");
+    }
+  });
+
+  document.getElementById("btn-new").addEventListener("click", () => {
+    results.classList.remove("visible");
+    dropZone.classList.remove("hidden");
+    errorMsg.style.display = "none";
+  });
+})();
+</script>
+</body>
+</html>
