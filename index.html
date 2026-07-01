@@ -3,79 +3,205 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Terraform Log Viewer</title>
+<script>
+(function () {
+  var theme = localStorage.getItem("theme") || "system";
+  document.documentElement.setAttribute("data-theme", theme);
+})();
+</script>
 <style>
+  :root {
+    color-scheme: light;
+    --bg-page: #f9fafb;
+    --bg-surface: #fff;
+    --bg-muted: #f9fafb;
+    --bg-hover: #f3f4f6;
+    --bg-drop-drag: #eff6ff;
+    --bg-module: #fafbfc;
+    --bg-module-expanded: #f0f4ff;
+    --border: #e5e7eb;
+    --border-strong: #d1d5db;
+    --border-dashed: #cbd5e1;
+    --border-row: #f3f4f6;
+    --text-primary: #1f2937;
+    --text-secondary: #374151;
+    --text-muted: #6b7280;
+    --text-faint: #9ca3af;
+    --accent: #4a90d9;
+    --error: #dc2626;
+    --dot-border: #fff;
+    --chart-line: #4a90d9;
+    --chart-grid: #e5e7eb;
+    --chart-phase: #d1d5db;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg-page: #0f1117;
+      --bg-surface: #171a22;
+      --bg-muted: #12151c;
+      --bg-hover: #252a35;
+      --bg-drop-drag: #1a2940;
+      --bg-module: #1a1e27;
+      --bg-module-expanded: #1e293b;
+      --border: #2d3340;
+      --border-strong: #3d4451;
+      --border-dashed: #404656;
+      --border-row: #22262f;
+      --text-primary: #f3f4f6;
+      --text-secondary: #d1d5db;
+      --text-muted: #9ca3af;
+      --text-faint: #6b7280;
+      --accent: #5ba3e8;
+      --dot-border: #171a22;
+      --chart-line: #5ba3e8;
+      --chart-grid: #2d3340;
+      --chart-phase: #404656;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg-page: #0f1117;
+    --bg-surface: #171a22;
+    --bg-muted: #12151c;
+    --bg-hover: #252a35;
+    --bg-drop-drag: #1a2940;
+    --bg-module: #1a1e27;
+    --bg-module-expanded: #1e293b;
+    --border: #2d3340;
+    --border-strong: #3d4451;
+    --border-dashed: #404656;
+    --border-row: #22262f;
+    --text-primary: #f3f4f6;
+    --text-secondary: #d1d5db;
+    --text-muted: #9ca3af;
+    --text-faint: #6b7280;
+    --accent: #5ba3e8;
+    --dot-border: #171a22;
+    --chart-line: #5ba3e8;
+    --chart-grid: #2d3340;
+    --chart-phase: #404656;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+  }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f9fafb; min-height: 100vh; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg-page); color: var(--text-primary); min-height: 100vh;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .app-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; background: var(--bg-page);
+  }
+  body:has(#results.visible) .app-header {
+    background: var(--bg-surface); border-bottom: 1px solid var(--border);
+  }
+
+  .app-header h1 {
+    flex: 1; min-width: 0; font-size: 16px; font-weight: 600; color: var(--text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .app-header h1:empty { display: none; }
+
+  .app-header-actions {
+    display: flex; align-items: center; gap: 12px; margin-left: auto;
+  }
+
+  #btn-new {
+    display: none; font-size: 12px; padding: 6px 12px;
+    border: 1px solid var(--border-strong); border-radius: 6px;
+    background: var(--bg-surface); color: var(--text-secondary); cursor: pointer;
+  }
+  body:has(#results.visible) #btn-new { display: inline-block; }
+  #btn-new:hover { background: var(--bg-hover); }
+
+  #theme-toggle {
+    display: flex; gap: 2px; padding: 3px; flex-shrink: 0;
+    background: var(--bg-surface); border: 1px solid var(--border-strong);
+    border-radius: 8px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+  #theme-toggle button {
+    font-size: 11px; padding: 5px 8px; border: none; border-radius: 5px;
+    background: transparent; color: var(--text-muted); cursor: pointer;
+  }
+  #theme-toggle button:hover { color: var(--text-primary); background: var(--bg-hover); }
+  #theme-toggle button.active { background: var(--bg-hover); color: var(--text-primary); font-weight: 600; }
 
   #drop-zone {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    min-height: 100vh; padding: 32px; border: 3px dashed #cbd5e1; margin: 16px;
-    border-radius: 12px; background: #fff; transition: border-color 0.15s, background 0.15s;
+    min-height: calc(100vh - 52px); padding: 32px; border: 3px dashed var(--border-dashed); margin: 16px;
+    border-radius: 12px; background: var(--bg-surface);
+    transition: border-color 0.15s, background 0.15s;
     cursor: pointer;
   }
-  #drop-zone.dragover { border-color: #4a90d9; background: #eff6ff; }
+  #drop-zone.dragover { border-color: var(--accent); background: var(--bg-drop-drag); }
   #drop-zone.hidden { display: none; }
-  #drop-zone h2 { font-size: 20px; color: #1f2937; margin-bottom: 8px; }
-  #drop-zone p { font-size: 14px; color: #6b7280; margin-bottom: 16px; text-align: center; max-width: 480px; }
-  #drop-zone .hint { font-size: 12px; color: #9ca3af; font-family: monospace; }
+  #drop-zone h2 { font-size: 20px; color: var(--text-primary); margin-bottom: 8px; }
+  #drop-zone p { font-size: 14px; color: var(--text-muted); margin-bottom: 16px; text-align: center; max-width: 480px; }
+  #drop-zone kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 4px;
+    background: var(--bg-muted); color: var(--text-secondary);
+  }
+  #drop-zone .hint { font-size: 12px; color: var(--text-faint); font-family: monospace; }
   #file-input { display: none; }
 
-  #results { display: none; padding: 16px; background: #fff; min-height: 100vh; }
+  #results { display: none; padding: 16px; background: var(--bg-surface); min-height: calc(100vh - 52px); }
   #results.visible { display: block; }
-
-  .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-  .toolbar h1 { font-size: 16px; color: #1f2937; flex: 1; }
-  .toolbar button {
-    font-size: 12px; padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px;
-    background: #fff; color: #374151; cursor: pointer;
-  }
-  .toolbar button:hover { background: #f3f4f6; }
 
   #summary {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
-    background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
-    padding: 12px 16px; margin-bottom: 16px; white-space: pre-wrap; color: #374151;
+    background: var(--bg-muted); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; margin-bottom: 16px; white-space: pre-wrap; color: var(--text-secondary);
     max-height: 320px; overflow-y: auto;
   }
 
   .swimlane { --label-w: 220px; }
-  .swim-row { display: flex; align-items: center; height: 28px; border-bottom: 1px solid #f3f4f6; }
-  .swim-ticks { display: flex; align-items: flex-end; height: 24px; border-bottom: 1px solid #e5e7eb; margin-bottom: 2px; }
+  .swim-row { display: flex; align-items: center; height: 28px; border-bottom: 1px solid var(--border-row); }
+  .swim-ticks { display: flex; align-items: flex-end; height: 24px; border-bottom: 1px solid var(--border); margin-bottom: 2px; }
   .swim-label { width: var(--label-w); min-width: var(--label-w); max-width: var(--label-w);
-                 font-size: 11px; font-family: monospace; color: #374151;
+                 font-size: 11px; font-family: monospace; color: var(--text-secondary);
                  padding-right: 8px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                  position: relative; }
   .swim-track { flex: 1; height: 100%; position: relative; overflow: hidden; }
   .chart-track.swim-track { overflow: visible; }
   .tick-track { height: 20px; }
-  .tick { position: absolute; transform: translateX(-50%); font-size: 9px; font-family: monospace; color: #9ca3af; }
-  .swim-dur { width: 120px; min-width: 120px; font-size: 9px; font-weight: 600; color: var(--bar-color, #6b7280);
+  .tick { position: absolute; transform: translateX(-50%); font-size: 9px; font-family: monospace; color: var(--text-faint); }
+  .swim-dur { width: 120px; min-width: 120px; font-size: 9px; font-weight: 600; color: var(--bar-color, var(--text-muted));
                padding-left: 8px; white-space: nowrap; }
 
   .chart-row { display: flex; align-items: stretch; margin-bottom: 8px; padding-top: 36px; }
   .chart-y-axis { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end;
                    padding-top: 20px; padding-bottom: 0; overflow: visible; }
-  .chart-y-axis .section-title { font-size: 11px; color: #6b7280; font-weight: 600; display: block; margin-bottom: 4px; }
-  .y-label { font-size: 10px; font-family: monospace; color: #9ca3af; position: absolute; right: 8px; transform: translateY(-50%); }
+  .chart-y-axis .section-title { font-size: 11px; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 4px; }
+  .y-label { font-size: 10px; font-family: monospace; color: var(--text-faint); position: absolute; right: 8px; transform: translateY(-50%); }
   .chart-track { height: 380px; position: relative; }
   .cumulative-svg { width: 100%; height: 100%; display: block; position: absolute; top: 0; left: 0; }
   .chart-overlays { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
-  .chart-overlays .phase-label { position: absolute; top: -18px; font-size: 9px; font-family: monospace; color: #9ca3af;
+  .chart-overlays .phase-label { position: absolute; top: -18px; font-size: 9px; font-family: monospace; color: var(--text-faint);
                                    white-space: nowrap; pointer-events: auto; }
-  .event-dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid white;
+  .event-dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--dot-border);
                 transform: translate(-50%, -50%); pointer-events: auto; cursor: default; }
   .legend-col { display: flex; flex-direction: column; gap: 4px; justify-content: center; }
-  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #6b7280; white-space: nowrap; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-muted); white-space: nowrap; }
   .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
   .resize-handle { position: absolute; top: 0; right: 0; width: 5px; height: 100%; cursor: col-resize;
                     background: transparent; z-index: 10; }
-  .resize-handle:hover, .resize-handle.active { background: #d1d5db; }
+  .resize-handle:hover, .resize-handle.active { background: var(--border-strong); }
 
-  .module-row { cursor: pointer; background: #fafbfc; }
-  .module-row:hover { background: #f3f4f6; }
-  .module-row.expanded { background: #f0f4ff; }
+  .module-row { cursor: pointer; background: var(--bg-module); }
+  .module-row:hover { background: var(--bg-hover); }
+  .module-row.expanded { background: var(--bg-module-expanded); }
   .expand-icon { display: inline-block; font-size: 8px; width: 12px; transition: transform 0.15s; }
   .module-row.expanded .expand-icon { transform: rotate(90deg); }
 
@@ -87,17 +213,29 @@
 
   .child-rows { display: none; }
   .child-rows.open { display: block; }
-  .child-row { height: 24px; background: #fff; }
-  .child-row:nth-child(even) { background: #fafbfc; }
-  .child-label { font-size: 10px; color: #6b7280; padding-left: 20px; text-align: right; }
-  .child-count { color: #9ca3af; font-size: 9px; }
+  .child-row { height: 24px; background: var(--bg-surface); }
+  .child-row:nth-child(even) { background: var(--bg-module); }
+  .child-label { font-size: 10px; color: var(--text-muted); padding-left: 20px; text-align: right; }
+  .child-count { color: var(--text-faint); font-size: 9px; }
 
-  .swim-axis-label { text-align: center; font-size: 11px; color: #6b7280; margin-top: 8px; }
+  .swim-axis-label { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 8px; }
 
-  #error-msg { display: none; color: #dc2626; font-size: 13px; margin-top: 12px; }
+  #error-msg { display: none; color: var(--error); font-size: 13px; margin-top: 12px; }
 </style>
 </head>
 <body>
+
+<header class="app-header">
+  <h1 id="title"></h1>
+  <div class="app-header-actions">
+    <button type="button" id="btn-new">Load another log</button>
+    <div id="theme-toggle" role="group" aria-label="Color theme">
+      <button type="button" data-theme-value="system">System</button>
+      <button type="button" data-theme-value="light">Light</button>
+      <button type="button" data-theme-value="dark">Dark</button>
+    </div>
+  </div>
+</header>
 
 <div id="drop-zone">
   <h2>Terraform Plan Log Viewer</h2>
@@ -108,10 +246,6 @@
 </div>
 
 <div id="results">
-  <div class="toolbar">
-    <h1 id="title"></h1>
-    <button type="button" id="btn-new">Load another log</button>
-  </div>
   <pre id="summary"></pre>
   <div class="swimlane" id="swimlane"></div>
 </div>
@@ -163,6 +297,46 @@
   const fileInput = document.getElementById("file-input");
   const results = document.getElementById("results");
   const errorMsg = document.getElementById("error-msg");
+  const themeToggle = document.getElementById("theme-toggle");
+  let lastLog = null;
+
+  function themeColors() {
+    const s = getComputedStyle(document.documentElement);
+    return {
+      line: s.getPropertyValue("--chart-line").trim(),
+      grid: s.getPropertyValue("--chart-grid").trim(),
+      phase: s.getPropertyValue("--chart-phase").trim(),
+    };
+  }
+
+  function getTheme() {
+    return localStorage.getItem("theme") || "system";
+  }
+
+  function setTheme(theme) {
+    localStorage.setItem("theme", theme);
+    document.documentElement.setAttribute("data-theme", theme);
+    themeToggle.querySelectorAll("button").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.themeValue === theme);
+    });
+    if (lastLog && results.classList.contains("visible")) {
+      document.getElementById("swimlane").innerHTML = renderSwimlane(lastLog);
+      wireInteractions();
+    }
+  }
+
+  setTheme(getTheme());
+  themeToggle.addEventListener("click", e => {
+    e.stopPropagation();
+    const btn = e.target.closest("button[data-theme-value]");
+    if (btn) setTheme(btn.dataset.themeValue);
+  });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (getTheme() === "system" && lastLog && results.classList.contains("visible")) {
+      document.getElementById("swimlane").innerHTML = renderSwimlane(lastLog);
+      wireInteractions();
+    }
+  });
 
   function esc(s) {
     return String(s)
@@ -503,17 +677,18 @@
 
     const pointStr = points.join(" ");
     const fillPoints = "0," + svgHInner + " " + pointStr + " " + svgW + "," + svgHInner;
+    const colors = themeColors();
     const svgParts = [
-      '<polygon points="' + fillPoints + '" fill="#4a90d9" opacity="0.12"/>',
-      '<polyline points="' + pointStr + '" fill="none" stroke="#4a90d9" stroke-width="1.8" vector-effect="non-scaling-stroke"/>',
+      '<polygon points="' + fillPoints + '" fill="' + colors.line + '" opacity="0.12"/>',
+      '<polyline points="' + pointStr + '" fill="none" stroke="' + colors.line + '" stroke-width="1.8" vector-effect="non-scaling-stroke"/>',
     ];
     for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
       const yy = svgHInner - frac * svgHInner;
-      svgParts.push('<line x1="0" y1="' + yy + '" x2="' + svgW + '" y2="' + yy + '" stroke="#e5e7eb" stroke-width="0.5" vector-effect="non-scaling-stroke"/>');
+      svgParts.push('<line x1="0" y1="' + yy + '" x2="' + svgW + '" y2="' + yy + '" stroke="' + colors.grid + '" stroke-width="0.5" vector-effect="non-scaling-stroke"/>');
     }
     for (const [phaseTs] of log.phases) {
       const px = (pctDt(phaseTs) / 100) * svgW;
-      svgParts.push('<line x1="' + px + '" y1="0" x2="' + px + '" y2="' + svgHInner + '" stroke="#d1d5db" stroke-width="1" stroke-dasharray="4,3" vector-effect="non-scaling-stroke"/>');
+      svgParts.push('<line x1="' + px + '" y1="0" x2="' + px + '" y2="' + svgHInner + '" stroke="' + colors.phase + '" stroke-width="1" stroke-dasharray="4,3" vector-effect="non-scaling-stroke"/>');
     }
 
     const overlays = [];
@@ -675,6 +850,7 @@
   }
 
   function showResults(log, filename) {
+    lastLog = log;
     const totalS = (log.timestamps[log.timestamps.length - 1] - log.timestamps[0]) / 1000;
     const title = "Terraform Log — " + fmtNum(log.timestamps.length) + " lines, " +
       log.events.length + " events, " + fmtNum(log.refreshes.length) + " refreshes, " +
@@ -744,6 +920,7 @@
     results.classList.remove("visible");
     dropZone.classList.remove("hidden");
     errorMsg.style.display = "none";
+    document.getElementById("title").textContent = "";
   });
 })();
 </script>
